@@ -1,6 +1,7 @@
+import os
 import discord
 from discord.ext import commands
-from utils.server_config import get_modlog_channel
+from dotenv import load_dotenv
 
 REQUIRED_PERMISSIONS = {
     "kick_members": "Kick Members",
@@ -9,37 +10,40 @@ REQUIRED_PERMISSIONS = {
     "manage_messages": "Manage Messages"
 }
 
+load_dotenv()
+LOG_CHANNEL_ID = int(os.getenv("BOT_LOG_CHANNEL_ID", 0))
+
 class Diagnostics(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
     @commands.Cog.listener()
     async def on_ready(self):
+        log_channel = self.bot.get_channel(LOG_CHANNEL_ID)
+        if not log_channel:
+            print(f"[Diagnostics] Could not find log channel with ID {LOG_CHANNEL_ID}")
+            return
+
         for guild in self.bot.guilds:
             bot_member = guild.me
             perms = bot_member.guild_permissions
             missing = [name for perm, name in REQUIRED_PERMISSIONS.items() if not getattr(perms, perm)]
 
-            report = f"[✅ Permissions OK in {guild.name}]" if not missing else f"[⚠️ Permissions Warning in {guild.name}]: Missing {', '.join(missing)}"
-            print(report)
+            embed = discord.Embed(
+                title=f"🔍 Permissions Check: {guild.name}",
+                color=discord.Color.green() if not missing else discord.Color.red()
+            )
+            embed.set_footer(text=f"Guild ID: {guild.id}")
 
-            # Try to DM owner
-            try:
-                owner = guild.owner
-                dm = owner.dm_channel or await owner.create_dm()
-                await dm.send(f"🛠️ AVM is online in **{guild.name}**.\n" + report)
-            except Exception as e:
-                print(f"Could not DM owner of {guild.name}: {e}")
+            if not missing:
+                embed.description = "✅ All required permissions are present."
+            else:
+                embed.description = (
+                    f"⚠️ **Missing Permissions:** {', '.join(missing)}\n"
+                    f"🔻 *Role position may also prevent moderation actions.*"
+                )
 
-                # Fallback: send to mod log if available
-                modlog_id = get_modlog_channel(guild.id)
-                if modlog_id:
-                    channel = self.bot.get_channel(modlog_id)
-                    if channel:
-                        try:
-                            await channel.send(f"⚠️ AVM could not DM the server owner.\n{report}")
-                        except Exception as err:
-                            print(f"Could not send to mod log in {guild.name}: {err}")
+            await log_channel.send(embed=embed)
 
 async def setup(bot):
     await bot.add_cog(Diagnostics(bot))
